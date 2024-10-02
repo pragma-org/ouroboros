@@ -1,0 +1,14 @@
+[package]
+name = "ouroboros"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hex = "0.4.3"
+mockall = "0.13"
+pallas-codec = { git = "https://github.com/txpipe/pallas", rev = "252714d58a93d58bf2cd7ada1156e3ace10a8298" }
+pallas-crypto = { git = "https://github.com/txpipe/pallas", rev = "252714d58a93d58bf2cd7ada1156e3ace10a8298" }
+thiserror = "1.0"
+
+[dev-dependencies]
+insta = { version = "1.40.0", features = ["yaml"] }
