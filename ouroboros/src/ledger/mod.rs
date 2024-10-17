@@ -20,16 +20,25 @@ pub struct PoolSigma {
     pub denominator: u64,
 }
 
-/// The pool info trait provides a lookup mechanism for pool data. This is sourced from the ledger
+/// The LedgerState trait provides a lookup mechanism for various information sourced from the ledger
 #[automock]
-pub trait PoolInfo: Send + Sync {
+pub trait LedgerState: Send + Sync {
     /// Performs a lookup of a pool_id to its sigma value. This usually represents a different set of
     /// sigma snapshot data depending on whether we need to look up the pool_id in the current epoch
     /// or in the future.
-    fn sigma(&self, pool_id: &PoolId) -> Result<PoolSigma, Error>;
+    fn pool_id_to_sigma(&self, pool_id: &PoolId) -> Result<PoolSigma, Error>;
 
     /// Hashes the vrf vkey of a pool.
     fn vrf_vkey_hash(&self, pool_id: &PoolId) -> Result<Hash<32>, Error>;
+
+    /// Calculate the KES period given an absolute slot and some shelley-genesis values
+    fn slot_to_kes_period(&self, slot: u64) -> u64;
+
+    /// Get the maximum number of KES evolutions from the ledger state
+    fn max_kes_evolutions(&self) -> u64;
+
+    /// Get the latest opcert sequence number we've seen for a given issuer_vkey
+    fn latest_opcert_sequence_number(&self, issuer_vkey: &[u8]) -> Option<u64>;
 }
 
 /// The node's cold vkey is hashed with blake2b224 to create the pool id

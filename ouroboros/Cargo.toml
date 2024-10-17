@@ -6,9 +6,11 @@ edition = "2021"
 [dependencies]
 hex = "0.4.3"
 mockall = "0.13"
-pallas-codec = { git = "https://github.com/txpipe/pallas", rev = "252714d58a93d58bf2cd7ada1156e3ace10a8298" }
-pallas-crypto = { git = "https://github.com/txpipe/pallas", rev = "252714d58a93d58bf2cd7ada1156e3ace10a8298" }
+pallas-codec = { git = "https://github.com/txpipe/pallas", rev = "4871342a8deffaceafb5e0f771e1623dfe57e25f" }
+pallas-crypto = { git = "https://github.com/txpipe/pallas", rev = "4871342a8deffaceafb5e0f771e1623dfe57e25f" }
 thiserror = "1.0"
+serde = { version = "1.0.210", features = ["derive"] }
+async-trait = "0.1.83"
 
 [dev-dependencies]
 insta = { version = "1.40.0", features = ["yaml"] }

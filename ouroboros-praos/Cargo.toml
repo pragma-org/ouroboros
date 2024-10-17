@@ -6,14 +6,20 @@ edition = "2021"
 [dependencies]
 hex = "0.4"
 ouroboros = { path = "../ouroboros" }
-pallas-crypto = { git = "https://github.com/txpipe/pallas", rev = "252714d58a93d58bf2cd7ada1156e3ace10a8298" }
-pallas-math = { git = "https://github.com/txpipe/pallas", rev = "252714d58a93d58bf2cd7ada1156e3ace10a8298" }
-pallas-primitives = { git = "https://github.com/txpipe/pallas", rev = "252714d58a93d58bf2cd7ada1156e3ace10a8298" }
+pallas-crypto = { git = "https://github.com/txpipe/pallas", rev = "4871342a8deffaceafb5e0f771e1623dfe57e25f" }
+pallas-math = { git = "https://github.com/txpipe/pallas", rev = "4871342a8deffaceafb5e0f771e1623dfe57e25f" }
+pallas-primitives = { git = "https://github.com/txpipe/pallas", rev = "4871342a8deffaceafb5e0f771e1623dfe57e25f" }
 tracing = "0.1"
+rayon = "1.10.0"
 
 [dev-dependencies]
 ctor = "0.2"
 insta = { version = "1.40.0", features = ["yaml"] }
 mockall = "0.13"
-pallas-traverse = { git = "https://github.com/txpipe/pallas", rev = "252714d58a93d58bf2cd7ada1156e3ace10a8298" }
+pallas-traverse = { git = "https://github.com/txpipe/pallas", rev = "4871342a8deffaceafb5e0f771e1623dfe57e25f" }
 tracing-subscriber = "0.3"
+criterion = "0.5.1"
+
+[[bench]]
+harness = false
+name = "benchmark"
