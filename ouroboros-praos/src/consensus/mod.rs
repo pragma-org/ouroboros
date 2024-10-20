@@ -28,8 +28,7 @@ pub struct BlockValidator<'b> {
     header: &'b babbage::MintedHeader<'b>,
     ledger_state: &'b dyn LedgerState,
     epoch_nonce: &'b Hash<32>,
-    // c is the ln(1-active_slots_coeff). Usually ln(1-0.05)
-    c: &'b FixedDecimal,
+    active_slots_coeff: &'b FixedDecimal,
 }
 
 impl<'b> BlockValidator<'b> {
@@ -37,13 +36,13 @@ impl<'b> BlockValidator<'b> {
         header: &'b babbage::MintedHeader,
         ledger_state: &'b dyn LedgerState,
         epoch_nonce: &'b Hash<32>,
-        c: &'b FixedDecimal,
+        active_slots_coeff: &'b FixedDecimal,
     ) -> Self {
         Self {
             header,
             ledger_state,
             epoch_nonce,
-            c,
+            active_slots_coeff,
         }
     }
 
@@ -103,7 +102,7 @@ impl<'b> BlockValidator<'b> {
                     &block_vrf_proof,
                 )
             }),
-            Box::new(|| self.validate_operational_certificate(issuer_vkey.as_slice())),
+            Box::new(|| self.validate_operational_certificate(issuer_vkey.as_slice(), &pool_id)),
             Box::new(|| self.validate_kes_signature(absolute_slot, kes_signature)),
         ];
 
@@ -138,10 +137,10 @@ impl<'b> BlockValidator<'b> {
             .operational_cert_kes_period;
 
         if opcert_kes_period > slot_kes_period {
-            return Err(ValidationError::KesVerificationError(
-                "Operational Certificate KES period is greater than the block slot KES period!"
-                    .to_string(),
-            ));
+            return Err(ValidationError::OpCertKesPeriodTooLarge {
+                opcert_kes_period,
+                slot_kes_period,
+            });
         }
         if slot_kes_period >= opcert_kes_period + self.ledger_state.max_kes_evolutions() {
             return Err(ValidationError::KesVerificationError(
@@ -168,7 +167,7 @@ impl<'b> BlockValidator<'b> {
             })
     }
 
-    fn validate_operational_certificate(&self, issuer_vkey: &[u8]) -> Result<(), ValidationError> {
+    fn validate_operational_certificate(&self, issuer_vkey: &[u8], pool_id: &PoolId) -> Result<(), ValidationError> {
         // Verify the Operational Certificate signature
         let opcert_signature = Signature::try_from(
             self.header
@@ -191,12 +190,12 @@ impl<'b> BlockValidator<'b> {
 
         // Check the sequence number of the operational certificate. It should either be the same
         // as the latest known sequence number for the issuer_vkey or one greater.
-        match self.ledger_state.latest_opcert_sequence_number(issuer_vkey) {
+        match self.ledger_state.latest_opcert_sequence_number(pool_id) {
             Some(latest_opcert_sequence_number) => {
-                if (opcert_sequence_number - latest_opcert_sequence_number) > 1 {
-                    return Err(ValidationError::InvalidOpcertSequenceNumber("Operational Certificate sequence number is too far ahead of the latest known sequence number!".to_string()));
-                } else if opcert_sequence_number < latest_opcert_sequence_number {
+                if opcert_sequence_number < latest_opcert_sequence_number {
                     return Err(ValidationError::InvalidOpcertSequenceNumber("Operational Certificate sequence number is less than the latest known sequence number!".to_string()));
+                } else if (opcert_sequence_number - latest_opcert_sequence_number) > 1 {
+                    return Err(ValidationError::InvalidOpcertSequenceNumber("Operational Certificate sequence number is too far ahead of the latest known sequence number!".to_string()));
                 }
                 trace!("Operational Certificate sequence number is ok.")
             }
@@ -289,15 +288,22 @@ impl<'b> BlockValidator<'b> {
         absolute_slot: u64,
         leader_vrf_output: &[u8],
     ) -> Result<(), ValidationError> {
+        // special case for testing purposes
+        if self.active_slots_coeff == &FixedDecimal::from(1u64) {
+            return Ok(());
+        }
+
         let certified_leader_vrf: FixedDecimal = leader_vrf_output.into();
         let denominator = CERTIFIED_NATURAL_MAX.deref() - &certified_leader_vrf;
         let recip_q = CERTIFIED_NATURAL_MAX.deref() / &denominator;
-        let x = -(sigma * self.c);
+        let c = (FixedDecimal::from(1u64) - self.active_slots_coeff.clone()).ln();
+        let x = -(sigma * &c);
 
+        trace!("leader_vrf_output: {}", hex::encode(leader_vrf_output));
         trace!("certified_leader_vrf: {}", certified_leader_vrf);
         trace!("denominator: {}", denominator);
         trace!("recip_q: {}", recip_q);
-        trace!("c: {}", self.c);
+        trace!("active_slots_coeff: {}", self.active_slots_coeff);
         trace!("x: {}", x);
 
         let ordering = x.exp_cmp(1000, 3, &recip_q);
@@ -333,10 +339,10 @@ impl<'b> BlockValidator<'b> {
         trace!("block vrf_vkey_hash: {}", hex::encode(vrf_vkey_hash));
         let ledger_vrf_vkey_hash = self.ledger_state.vrf_vkey_hash(pool_id)?;
         if vrf_vkey_hash != ledger_vrf_vkey_hash {
-            return Err(ValidationError::InvalidVrfKeyForPool(
-                hex::encode(ledger_vrf_vkey_hash),
-                hex::encode(vrf_vkey),
-            ));
+            return Err(ValidationError::InvalidVrfKeyForPool {
+                key_hash_from_ledger: hex::encode(ledger_vrf_vkey_hash),
+                key_hash_from_block: hex::encode(vrf_vkey),
+            });
         }
         Ok(())
     }
@@ -409,7 +415,6 @@ mod tests {
 
             let active_slots_coeff: FixedDecimal =
                 FixedDecimal::from(5u64) / FixedDecimal::from(100u64);
-            let c = (FixedDecimal::from(1u64) - active_slots_coeff).ln();
             let conway_block_tag: u8 = 6;
             let multi_era_header =
                 MultiEraHeader::decode(conway_block_tag, None, test_block).unwrap();
@@ -441,7 +446,7 @@ mod tests {
                 .returning(|_| None);
 
             let block_validator =
-                BlockValidator::new(babbage_header, &ledger_state, &epoch_nonce, &c);
+                BlockValidator::new(babbage_header, &ledger_state, &epoch_nonce, &active_slots_coeff);
             assert_eq!(block_validator.validate().is_ok(), expected);
         }
     }
