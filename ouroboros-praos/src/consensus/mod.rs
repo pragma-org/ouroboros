@@ -1,15 +1,18 @@
-use ouroboros::ledger::{issuer_vkey_to_pool_id, PoolId, PoolInfo};
-use ouroboros::validator::Validator;
+use ouroboros::ledger::{issuer_vkey_to_pool_id, LedgerState, PoolId};
+use ouroboros::validator::{ValidationError, Validator};
 use pallas_crypto::hash::{Hash, Hasher};
+use pallas_crypto::kes::{KesPublicKey, KesSignature};
+use pallas_crypto::key::ed25519::{PublicKey, Signature};
 use pallas_crypto::vrf::{
     VrfProof, VrfProofBytes, VrfProofHashBytes, VrfPublicKey, VrfPublicKeyBytes,
 };
 use pallas_math::math::{ExpOrdering, FixedDecimal, FixedPrecision};
 use pallas_primitives::babbage;
 use pallas_primitives::babbage::{derive_tagged_vrf_output, VrfDerivation};
+use rayon::prelude::*;
 use std::ops::Deref;
 use std::sync::LazyLock;
-use tracing::{error, span, trace, warn};
+use tracing::{span, trace};
 
 /// The certified natural max value represents 2^256 in praos consensus
 static CERTIFIED_NATURAL_MAX: LazyLock<FixedDecimal> = LazyLock::new(|| {
@@ -22,8 +25,8 @@ static CERTIFIED_NATURAL_MAX: LazyLock<FixedDecimal> = LazyLock::new(|| {
 
 /// Validator for a block using praos consensus.
 pub struct BlockValidator<'b> {
-    header: &'b babbage::Header,
-    pool_info: &'b dyn PoolInfo,
+    header: &'b babbage::MintedHeader<'b>,
+    ledger_state: &'b dyn LedgerState,
     epoch_nonce: &'b Hash<32>,
     // c is the ln(1-active_slots_coeff). Usually ln(1-0.05)
     c: &'b FixedDecimal,
@@ -31,67 +34,46 @@ pub struct BlockValidator<'b> {
 
 impl<'b> BlockValidator<'b> {
     pub fn new(
-        header: &'b babbage::Header,
-        pool_info: &'b dyn PoolInfo,
+        header: &'b babbage::MintedHeader,
+        ledger_state: &'b dyn LedgerState,
         epoch_nonce: &'b Hash<32>,
         c: &'b FixedDecimal,
     ) -> Self {
         Self {
             header,
-            pool_info,
+            ledger_state,
             epoch_nonce,
             c,
         }
     }
 
-    fn validate_babbage_compatible(&self) -> bool {
+    fn validate_babbage_compatible(&self) -> Result<(), ValidationError> {
         let span = span!(tracing::Level::TRACE, "validate_babbage_compatible");
         let _enter = span.enter();
 
         // Grab all the values we need to validate the block
+        let absolute_slot = self.header.header_body.slot;
         let issuer_vkey = &self.header.header_body.issuer_vkey;
         let pool_id: PoolId = issuer_vkey_to_pool_id(issuer_vkey);
-        let vrf_vkey: VrfPublicKeyBytes = match (&self.header.header_body.vrf_vkey).try_into() {
-            Ok(vrf_vkey) => vrf_vkey,
-            Err(error) => {
-                error!("Could not convert vrf_vkey: {}", error);
-                return false;
-            }
-        };
-        if !self.ledger_matches_block_vrf_key_hash(&pool_id, &vrf_vkey) {
-            // Fail fast if the vrf key hash in the block does not match the ledger
-            return false;
-        }
-        let sigma: FixedDecimal = match self.pool_info.sigma(&pool_id) {
-            Ok(sigma) => {
-                FixedDecimal::from(sigma.numerator) / FixedDecimal::from(sigma.denominator)
-            }
-            Err(error) => {
-                warn!("{:?} - {:?}", error, pool_id);
-                return false;
-            }
-        };
-        let absolute_slot = self.header.header_body.slot;
+        let vrf_vkey: VrfPublicKeyBytes = (&self.header.header_body.vrf_vkey)
+            .try_into()
+            .map_err(|error| ValidationError::InvalidByteLength(format!("vrf_vkey: {}", error)))?;
 
-        // Get the leader VRF output hash from the block vrf result
         let leader_vrf_output = &self.header.header_body.leader_vrf_output();
+        let sigma: FixedDecimal = self.ledger_state.pool_id_to_sigma(&pool_id).map(|sigma| {
+            FixedDecimal::from(sigma.numerator) / FixedDecimal::from(sigma.denominator)
+        })?;
 
-        let block_vrf_proof_hash: VrfProofHashBytes =
-            match (&self.header.header_body.vrf_result.0).try_into() {
-                Ok(block_vrf_proof_hash) => block_vrf_proof_hash,
-                Err(error) => {
-                    error!("Could not convert block vrf proof hash: {}", error);
-                    return false;
-                }
-            };
-        let block_vrf_proof: VrfProofBytes =
-            match (&self.header.header_body.vrf_result.1).try_into() {
-                Ok(block_vrf_proof) => block_vrf_proof,
-                Err(error) => {
-                    error!("Could not convert block vrf proof: {}", error);
-                    return false;
-                }
-            };
+        let block_vrf_proof_hash: VrfProofHashBytes = (&self.header.header_body.vrf_result.0)
+            .try_into()
+            .map_err(|error| {
+                ValidationError::InvalidByteLength(format!("block_vrf_proof_hash: {}", error))
+            })?;
+        let block_vrf_proof: VrfProofBytes = (&self.header.header_body.vrf_result.1)
+            .try_into()
+            .map_err(|error| {
+                ValidationError::InvalidByteLength(format!("block_vrf_proof: {}", error))
+            })?;
         let kes_signature = self.header.body_signature.as_slice();
 
         trace!("pool_id: {}", pool_id);
@@ -109,60 +91,204 @@ impl<'b> BlockValidator<'b> {
         );
         trace!("kes_signature: {}", hex::encode(kes_signature));
 
+        let validation_checks: Vec<Box<dyn Fn() -> Result<(), ValidationError> + Send + Sync>> = vec![
+            Box::new(|| self.validate_ledger_matches_block_vrf_key_hash(&pool_id, &vrf_vkey)),
+            Box::new(|| {
+                self.validate_block_vrf(
+                    absolute_slot,
+                    &vrf_vkey,
+                    leader_vrf_output,
+                    &sigma,
+                    block_vrf_proof_hash,
+                    &block_vrf_proof,
+                )
+            }),
+            Box::new(|| self.validate_operational_certificate(issuer_vkey.as_slice())),
+            Box::new(|| self.validate_kes_signature(absolute_slot, kes_signature)),
+        ];
+
+        validation_checks
+            .into_par_iter()
+            .try_for_each(|check| check())?;
+
+        Ok(())
+    }
+
+    fn validate_kes_signature(
+        &self,
+        absolute_slot: u64,
+        kes_signature: &[u8],
+    ) -> Result<(), ValidationError> {
+        // Verify the KES signature
+        let kes_pk = KesPublicKey::from_bytes(
+            &self
+                .header
+                .header_body
+                .operational_cert
+                .operational_cert_hot_vkey,
+        )
+        .map_err(|error| ValidationError::InvalidByteLength(format!("kes_pk: {}", error)))?;
+
+        // calculate the right KES period to verify the signature
+        let slot_kes_period = self.ledger_state.slot_to_kes_period(absolute_slot);
+        let opcert_kes_period = self
+            .header
+            .header_body
+            .operational_cert
+            .operational_cert_kes_period;
+
+        if opcert_kes_period > slot_kes_period {
+            return Err(ValidationError::KesVerificationError(
+                "Operational Certificate KES period is greater than the block slot KES period!"
+                    .to_string(),
+            ));
+        }
+        if slot_kes_period >= opcert_kes_period + self.ledger_state.max_kes_evolutions() {
+            return Err(ValidationError::KesVerificationError(
+                "Operational Certificate KES period is too old!".to_string(),
+            ));
+        }
+
+        let kes_period = (slot_kes_period - opcert_kes_period) as u32;
+        trace!("kes_period: {}", kes_period);
+
+        // The header_body_cbor was signed by the KES private key. Verify this with the KES public key
+        let header_body_cbor = self.header.header_body.raw_cbor();
+        let kes_signature = KesSignature::from_bytes(kes_signature).map_err(|error| {
+            ValidationError::InvalidByteLength(format!("kes_signature: {}", error))
+        })?;
+
+        kes_signature
+            .verify(kes_period, &kes_pk, header_body_cbor)
+            .map_err(|error| {
+                ValidationError::KesVerificationError(format!(
+                    "KES signature verification failed: {}",
+                    error
+                ))
+            })
+    }
+
+    fn validate_operational_certificate(&self, issuer_vkey: &[u8]) -> Result<(), ValidationError> {
+        // Verify the Operational Certificate signature
+        let opcert_signature = Signature::try_from(
+            self.header
+                .header_body
+                .operational_cert
+                .operational_cert_sigma
+                .as_slice(),
+        )
+        .map_err(|error| {
+            ValidationError::InvalidByteLength(format!("opcert_signature: {}", error))
+        })?;
+        let cold_pk = PublicKey::try_from(issuer_vkey)
+            .map_err(|error| ValidationError::InvalidByteLength(format!("cold_pk: {}", error)))?;
+
+        let opcert_sequence_number = self
+            .header
+            .header_body
+            .operational_cert
+            .operational_cert_sequence_number;
+
+        // Check the sequence number of the operational certificate. It should either be the same
+        // as the latest known sequence number for the issuer_vkey or one greater.
+        match self.ledger_state.latest_opcert_sequence_number(issuer_vkey) {
+            Some(latest_opcert_sequence_number) => {
+                if (opcert_sequence_number - latest_opcert_sequence_number) > 1 {
+                    return Err(ValidationError::InvalidOpcertSequenceNumber("Operational Certificate sequence number is too far ahead of the latest known sequence number!".to_string()));
+                } else if opcert_sequence_number < latest_opcert_sequence_number {
+                    return Err(ValidationError::InvalidOpcertSequenceNumber("Operational Certificate sequence number is less than the latest known sequence number!".to_string()));
+                }
+                trace!("Operational Certificate sequence number is ok.")
+            }
+            None => {
+                trace!("No latest known opcert sequence number for the issuer_vkey");
+            }
+        }
+
+        // The opcert message is a concatenation of the KES vkey, the sequence number, and the kes period
+        let mut opcert_message = Vec::new();
+        opcert_message.extend_from_slice(
+            &self
+                .header
+                .header_body
+                .operational_cert
+                .operational_cert_hot_vkey,
+        );
+        opcert_message.extend_from_slice(
+            &self
+                .header
+                .header_body
+                .operational_cert
+                .operational_cert_sequence_number
+                .to_be_bytes(),
+        );
+        opcert_message.extend_from_slice(
+            &self
+                .header
+                .header_body
+                .operational_cert
+                .operational_cert_kes_period
+                .to_be_bytes(),
+        );
+
+        if cold_pk.verify(&opcert_message, &opcert_signature) {
+            Ok(())
+        } else {
+            Err(ValidationError::InvalidOpcertSignature)
+        }
+    }
+
+    fn validate_block_vrf(
+        &self,
+        absolute_slot: u64,
+        vrf_vkey: &VrfPublicKeyBytes,
+        leader_vrf_output: &Vec<u8>,
+        sigma: &FixedDecimal,
+        block_vrf_proof_hash: VrfProofHashBytes,
+        block_vrf_proof: &VrfProofBytes,
+    ) -> Result<(), ValidationError> {
         // Calculate the VRF input seed so we can verify the VRF output against it.
         let vrf_input_seed = self.mk_vrf_input(absolute_slot, self.epoch_nonce.as_ref());
         trace!("vrf_input_seed: {}", vrf_input_seed);
 
         // Verify the VRF proof
-        let vrf_proof = VrfProof::from(&block_vrf_proof);
-        let vrf_vkey = VrfPublicKey::from(&vrf_vkey);
-        match vrf_proof.verify(&vrf_vkey, vrf_input_seed.as_ref()) {
-            Ok(proof_hash) => {
-                if proof_hash.as_slice() != block_vrf_proof_hash.as_slice() {
-                    error!("VRF proof hash mismatch");
-                    false
-                } else {
-                    // The proof was valid. Make sure that our leader_vrf_output matches what was in the block
-                    trace!("certified_proof_hash: {}", hex::encode(proof_hash));
-                    let calculated_leader_vrf_output =
-                        derive_tagged_vrf_output(proof_hash.as_slice(), VrfDerivation::Leader);
-                    if calculated_leader_vrf_output.as_slice() != leader_vrf_output.as_slice() {
-                        error!(
-                            "Leader VRF output hash mismatch. was: {}, expected: {}",
-                            hex::encode(calculated_leader_vrf_output),
-                            hex::encode(leader_vrf_output)
-                        );
-                        false
-                    } else {
-                        // The leader VRF output hash matches what was in the block
-                        // Now we need to check if the pool had enough sigma stake to produce this block
-                        if self.pool_meets_delegation_threshold(
-                            &sigma,
-                            absolute_slot,
-                            leader_vrf_output.as_slice(),
-                        ) {
-                            // TODO: Validate the KES signature
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                }
-            }
-            Err(error) => {
-                error!("Could not verify block vrf: {}", error);
-                false
+        let vrf_proof = VrfProof::from(block_vrf_proof);
+        let vrf_vkey = VrfPublicKey::from(vrf_vkey);
+        let proof_hash = vrf_proof.verify(&vrf_vkey, vrf_input_seed.as_ref())?;
+        if proof_hash.as_slice() != block_vrf_proof_hash.as_slice() {
+            Err(ValidationError::InvalidVrfProofHash(
+                hex::encode(block_vrf_proof_hash.as_slice()),
+                hex::encode(proof_hash.as_slice()),
+            ))
+        } else {
+            // The proof was valid. Make sure that our leader_vrf_output matches what was in the block
+            trace!("certified_proof_hash: {}", hex::encode(proof_hash));
+            let calculated_leader_vrf_output =
+                derive_tagged_vrf_output(proof_hash.as_slice(), VrfDerivation::Leader);
+            if calculated_leader_vrf_output.as_slice() != leader_vrf_output.as_slice() {
+                Err(ValidationError::InvalidVrfLeaderHash(
+                    hex::encode(leader_vrf_output),
+                    hex::encode(calculated_leader_vrf_output),
+                ))
+            } else {
+                // The leader VRF output hash matches what was in the block
+                // Now we need to check if the pool had enough sigma stake to produce this block
+                self.validate_pool_meets_delegation_threshold(
+                    sigma,
+                    absolute_slot,
+                    leader_vrf_output.as_slice(),
+                )
             }
         }
     }
 
     /// Verify that the pool meets the delegation threshold
-    fn pool_meets_delegation_threshold(
+    fn validate_pool_meets_delegation_threshold(
         &self,
         sigma: &FixedDecimal,
         absolute_slot: u64,
         leader_vrf_output: &[u8],
-    ) -> bool {
+    ) -> Result<(), ValidationError> {
         let certified_leader_vrf: FixedDecimal = leader_vrf_output.into();
         let denominator = CERTIFIED_NATURAL_MAX.deref() - &certified_leader_vrf;
         let recip_q = CERTIFIED_NATURAL_MAX.deref() / &denominator;
@@ -183,7 +309,7 @@ impl<'b> BlockValidator<'b> {
                     recip_q,
                     ordering.approx
                 );
-                true
+                Ok(())
             }
             _ => {
                 trace!(
@@ -192,35 +318,27 @@ impl<'b> BlockValidator<'b> {
                     recip_q,
                     ordering.approx
                 );
-                false
+                Err(ValidationError::InsufficientPoolStake)
             }
         }
     }
 
     /// Validate that the VRF key hash in the block matches the VRF key hash in the ledger
-    fn ledger_matches_block_vrf_key_hash(
+    fn validate_ledger_matches_block_vrf_key_hash(
         &self,
         pool_id: &PoolId,
         vrf_vkey: &VrfPublicKeyBytes,
-    ) -> bool {
+    ) -> Result<(), ValidationError> {
         let vrf_vkey_hash: Hash<32> = Hasher::<256>::hash(vrf_vkey);
         trace!("block vrf_vkey_hash: {}", hex::encode(vrf_vkey_hash));
-        let ledger_vrf_vkey_hash = match self.pool_info.vrf_vkey_hash(pool_id) {
-            Ok(ledger_vrf_vkey_hash) => ledger_vrf_vkey_hash,
-            Err(error) => {
-                warn!("{:?} - {:?}", error, pool_id);
-                return false;
-            }
-        };
+        let ledger_vrf_vkey_hash = self.ledger_state.vrf_vkey_hash(pool_id)?;
         if vrf_vkey_hash != ledger_vrf_vkey_hash {
-            error!(
-                "VRF vkey hash in block ({}) does not match registered ledger vrf vkey hash ({})",
-                hex::encode(vrf_vkey_hash),
-                hex::encode(ledger_vrf_vkey_hash)
-            );
-            return false;
+            return Err(ValidationError::InvalidVrfKeyForPool(
+                hex::encode(ledger_vrf_vkey_hash),
+                hex::encode(vrf_vkey),
+            ));
         }
-        true
+        Ok(())
     }
 
     fn mk_vrf_input(&self, absolute_slot: u64, eta0: &[u8]) -> Hash<32> {
@@ -233,7 +351,7 @@ impl<'b> BlockValidator<'b> {
 }
 
 impl Validator for BlockValidator<'_> {
-    fn validate(&self) -> bool {
+    fn validate(&self) -> Result<(), ValidationError> {
         self.validate_babbage_compatible()
     }
 }
@@ -243,7 +361,7 @@ mod tests {
     use crate::consensus::BlockValidator;
     use ctor::ctor;
     use mockall::predicate::eq;
-    use ouroboros::ledger::{MockPoolInfo, PoolId, PoolSigma};
+    use ouroboros::ledger::{MockLedgerState, PoolId, PoolSigma};
     use ouroboros::validator::Validator;
     use pallas_crypto::hash::Hash;
     use pallas_math::math::{FixedDecimal, FixedPrecision};
@@ -252,10 +370,9 @@ mod tests {
     #[ctor]
     fn init() {
         // set rust log level to TRACE
-        // std::env::set_var("RUST_LOG", "ouroboros-praos=trace");
-
+        // std::env::set_var("RUST_LOG", "trace");
         // initialize tracing crate
-        tracing_subscriber::fmt::init();
+        // tracing_subscriber::fmt::init();
     }
 
     #[test]
@@ -299,9 +416,9 @@ mod tests {
             let babbage_header = multi_era_header.as_babbage().expect("Infallible");
             assert_eq!(babbage_header.header_body.slot, 134402628u64);
 
-            let mut pool_info = MockPoolInfo::new();
-            pool_info
-                .expect_sigma()
+            let mut ledger_state = MockLedgerState::new();
+            ledger_state
+                .expect_pool_id_to_sigma()
                 .with(eq(pool_id))
                 .returning(move |_| {
                     Ok(PoolSigma {
@@ -309,13 +426,23 @@ mod tests {
                         denominator,
                     })
                 });
-            pool_info
+            ledger_state
                 .expect_vrf_vkey_hash()
                 .with(eq(pool_id))
                 .returning(move |_| Ok(vrf_vkey_hash));
+            ledger_state.expect_slot_to_kes_period().returning(|slot| {
+                // hardcode some values from shelley-genesis.json for the mock implementation
+                let slots_per_kes_period: u64 = 129600; // from shelley-genesis.json (1.5 days in seconds)
+                slot / slots_per_kes_period
+            });
+            ledger_state.expect_max_kes_evolutions().returning(|| 62);
+            ledger_state
+                .expect_latest_opcert_sequence_number()
+                .returning(|_| None);
 
-            let block_validator = BlockValidator::new(babbage_header, &pool_info, &epoch_nonce, &c);
-            assert_eq!(block_validator.validate(), expected);
+            let block_validator =
+                BlockValidator::new(babbage_header, &ledger_state, &epoch_nonce, &c);
+            assert_eq!(block_validator.validate().is_ok(), expected);
         }
     }
 }
