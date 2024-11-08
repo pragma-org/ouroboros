@@ -11,7 +11,7 @@ pub enum ValidationError {
     #[error("Ledger error: {0}")]
     LedgerError(#[from] crate::ledger::Error),
     #[error("VrfVerificationError: {0}")]
-    VrfVerificationError(#[from] pallas_crypto::vrf::VerificationError),
+    VrfVerificationError(#[from] ouroboros_crypto::vrf::VerificationError),
     #[error("InvalidVrfProofHash, expected: {0}, was: {1}")]
     InvalidVrfProofHash(String, String),
     #[error("InvalidVrfLeaderHash, expected: {0}, was: {1}")]
