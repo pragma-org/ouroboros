@@ -6,17 +6,18 @@ edition = "2021"
 [dependencies]
 hex = "0.4"
 ouroboros = { path = "../ouroboros" }
-pallas-crypto = { git = "https://github.com/txpipe/pallas", rev = "4871342a8deffaceafb5e0f771e1623dfe57e25f" }
-pallas-math = { git = "https://github.com/txpipe/pallas", rev = "4871342a8deffaceafb5e0f771e1623dfe57e25f" }
-pallas-primitives = { git = "https://github.com/txpipe/pallas", rev = "4871342a8deffaceafb5e0f771e1623dfe57e25f" }
+ouroboros-crypto = { path = "../ouroboros-crypto" }
+pallas-crypto = "0.31.0"
+pallas-math = "0.31.0"
+pallas-primitives = "0.31.0"
 tracing = "0.1"
-rayon = "1.10.0"
+rayon = "1.10"
 
 [dev-dependencies]
 ctor = "0.2"
-insta = { version = "1.40.0", features = ["yaml"] }
+insta = { version = "1.41", features = ["yaml"] }
 mockall = "0.13"
-pallas-traverse = { git = "https://github.com/txpipe/pallas", rev = "4871342a8deffaceafb5e0f771e1623dfe57e25f" }
+pallas-traverse = "0.31.0"
 tracing-subscriber = "0.3"
 criterion = "0.5.1"
 

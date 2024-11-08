@@ -1,11 +1,11 @@
 use ouroboros::ledger::{issuer_vkey_to_pool_id, LedgerState, PoolId};
 use ouroboros::validator::{ValidationError, Validator};
-use pallas_crypto::hash::{Hash, Hasher};
-use pallas_crypto::kes::{KesPublicKey, KesSignature};
-use pallas_crypto::key::ed25519::{PublicKey, Signature};
-use pallas_crypto::vrf::{
+use ouroboros_crypto::kes::{KesPublicKey, KesSignature};
+use ouroboros_crypto::vrf::{
     VrfProof, VrfProofBytes, VrfProofHashBytes, VrfPublicKey, VrfPublicKeyBytes,
 };
+use pallas_crypto::hash::{Hash, Hasher};
+use pallas_crypto::key::ed25519::{PublicKey, Signature};
 use pallas_math::math::{ExpOrdering, FixedDecimal, FixedPrecision};
 use pallas_primitives::babbage;
 use pallas_primitives::babbage::{derive_tagged_vrf_output, VrfDerivation};
