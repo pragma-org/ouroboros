@@ -38,7 +38,7 @@ pub trait LedgerState: Send + Sync {
     fn max_kes_evolutions(&self) -> u64;
 
     /// Get the latest opcert sequence number we've seen for a given issuer_vkey
-    fn latest_opcert_sequence_number(&self, issuer_vkey: &[u8]) -> Option<u64>;
+    fn latest_opcert_sequence_number(&self, pool_id: &PoolId) -> Option<u64>;
 }
 
 /// The node's cold vkey is hashed with blake2b224 to create the pool id

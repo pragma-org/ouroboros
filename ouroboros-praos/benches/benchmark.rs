@@ -27,7 +27,6 @@ fn validate_conway_block() {
 
         let active_slots_coeff: FixedDecimal =
             FixedDecimal::from(5u64) / FixedDecimal::from(100u64);
-        let c = (FixedDecimal::from(1u64) - active_slots_coeff).ln();
         let conway_block_tag: u8 = 6;
         let multi_era_header = MultiEraHeader::decode(conway_block_tag, None, test_block).unwrap();
         let babbage_header = multi_era_header.as_babbage().expect("Infallible");
@@ -57,7 +56,7 @@ fn validate_conway_block() {
             .expect_latest_opcert_sequence_number()
             .returning(|_| None);
 
-        let block_validator = BlockValidator::new(babbage_header, &ledger_state, &epoch_nonce, &c);
+        let block_validator = BlockValidator::new(babbage_header, &ledger_state, &epoch_nonce, &active_slots_coeff);
         assert_eq!(block_validator.validate().is_ok(), expected);
     }
 }
