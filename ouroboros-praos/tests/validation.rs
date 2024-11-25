@@ -4,9 +4,9 @@ use ctor::ctor;
 use mockall::predicate::eq;
 use ouroboros::ledger::{MockLedgerState, PoolSigma};
 use ouroboros::validator::Validator;
+use ouroboros_crypto::kes::KesSecretKey;
 use ouroboros_praos::consensus::BlockValidator;
 use pallas_crypto::hash::Hash;
-use pallas_crypto::kes::KesSecretKey;
 use pallas_crypto::key::ed25519::SecretKey;
 use pallas_math::math::FixedDecimal;
 use pallas_traverse::{ComputeHash, MultiEraHeader};
@@ -49,7 +49,7 @@ struct GeneratorContext {
     #[serde(rename = "ocertCounters")]
     operational_certificate_counters: HashMap<Hash<28>, u64>,
     #[serde(rename = "activeSlotCoeff")]
-    active_slot_coeff : f64
+    active_slot_coeff: f64,
 }
 
 impl GeneratorContext {
@@ -72,7 +72,8 @@ impl std::fmt::Debug for GeneratorContext {
             .field(
                 "operational_certificate_counters",
                 &self.operational_certificate_counters,
-            ).field("active_slot_coeff", &self.active_slot_coeff)
+            )
+            .field("active_slot_coeff", &self.active_slot_coeff)
             .finish()
     }
 }
@@ -182,7 +183,11 @@ fn mock_ledger_state(context: &GeneratorContext) -> MockLedgerState {
     let vrf_vkey_hash = context.vrf_vkey_hash;
     let praos_slots_per_kes_period = context.praos_slots_per_kes_period;
     let praos_max_kes_evolution = context.praos_max_kes_evolution;
-    let opcert_counter = context.operational_certificate_counters.get(&pool_id).copied().or(None);
+    let opcert_counter = context
+        .operational_certificate_counters
+        .get(&pool_id)
+        .copied()
+        .or(None);
 
     ledger_state
         .expect_pool_id_to_sigma()
