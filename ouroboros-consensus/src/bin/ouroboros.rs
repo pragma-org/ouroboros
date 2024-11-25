@@ -18,6 +18,10 @@ pub fn main() {
     for i in 1..10 {
         let node_id = format!("N{}", i);
         let chain = handle.get_preferred_chain(&node_id);
-        println!("Chain for {}: {:?}", node_id, chain);
+        println!(
+            "{{\"{}\": {}}}",
+            node_id,
+            serde_json::to_string(&chain).unwrap()
+        );
     }
 }
