@@ -4,4 +4,6 @@ members = [
     "ouroboros",
     "ouroboros-crypto",
     "ouroboros-praos",
+    "ouroboros-consensus",
+    "ouroboros-simulation"
 ]

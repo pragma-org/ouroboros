@@ -1,0 +1,33 @@
+[package]
+name = "ouroboros_consensus"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chrono = { version = "0.4.34", features = ["serde"] }
+hex = { version = "0.4.3", features = ["serde"] }
+serde = { version = "1.0.196", features = ["derive"] }
+serde_json = "1.0.113"
+serde_yaml = "0.9.31"
+rand = "0.8.5"
+# depend on netsim at bleeding edge for the moment
+netsim = { git = "https://github.com/input-output-hk/ce-netsim", branch = "main" }
+# depends on ouroboros-simulation
+ouroboros-simulation = { path = "../ouroboros-simulation" }
+
+[build-dependencies]
+cbindgen = "0.26.0"
+
+[lib]
+name = "ouroboros_consensus"
+crate-type = [ "lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "ouroboros"
+
+[dev-dependencies]
+fake = "2.9.2"
+quickcheck = "1.0.3"
+quickcheck_macros = "1.0.0"

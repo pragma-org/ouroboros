@@ -1,0 +1,8 @@
+randomSeed: 12345
+endSlot: 100
+peerCount: 10
+downstreamCount: 3
+totalStake: null
+maximumStake: 1000
+messageLatency: 350000
+messageBandwidth: 250
