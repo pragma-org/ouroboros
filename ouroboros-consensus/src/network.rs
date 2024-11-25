@@ -286,12 +286,13 @@ fn make_node(
     let socket = context.open().unwrap();
     let socket_id = socket.id();
     let socket_mutex = Arc::new(Mutex::new(socket));
+    let hundred_gbits = 100 * 1024 * 1024 * 1024;
     context
         .set_node_policy(
             socket_id,
             NodePolicy {
-                bandwidth_down: Bandwidth::bits_per(u64::MAX, Duration::from_secs(1)),
-                bandwidth_up: Bandwidth::bits_per(u64::MAX, Duration::from_secs(1)),
+                bandwidth_down: Bandwidth::bits_per(hundred_gbits, Duration::from_secs(1)),
+                bandwidth_up: Bandwidth::bits_per(hundred_gbits, Duration::from_secs(1)),
                 location: None,
             },
         )
