@@ -81,20 +81,14 @@ impl Network {
             .connections
             .iter()
             .map(|(nodeId, _)| {
-                let iface = make_node(
-                    &nodeId.nodeId,
-                    &mut context,
-                    parameters,
-                    &protocol,
-                    &mut seed,
-                );
-                (nodeId.clone(), iface)
+                let iface = make_node(*nodeId, &mut context, parameters, &protocol, &mut seed);
+                (*nodeId, iface)
             })
             .collect();
 
         let chains = nodes
             .keys()
-            .map(|node_id| (node_id.clone(), empty_chain()))
+            .map(|node_id| (*node_id, empty_chain()))
             .collect();
 
         Network {
@@ -195,15 +189,9 @@ impl NetworkHandle {
         }
     }
 
-    pub fn get_preferred_chain(&self, node_id: &str) -> Chain {
+    pub fn get_preferred_chain(&self, node_id: u64) -> Chain {
         let network = self.network.lock().unwrap();
-        network
-            .chains
-            .get(&NodeId {
-                nodeId: node_id.to_string(),
-            })
-            .unwrap()
-            .clone()
+        network.chains.get(&node_id).unwrap().clone()
     }
 }
 
@@ -268,8 +256,7 @@ fn receive_and_forward_loop(
                         .expect("send failed");
                 }
                 OutEnvelope::Stopped(node_id) => {
-                    tx.send(Control::Stopped(NodeId { nodeId: node_id }))
-                        .expect("send failed");
+                    tx.send(Control::Stopped(node_id)).expect("send failed");
                 }
             }
         }
@@ -277,7 +264,7 @@ fn receive_and_forward_loop(
 }
 
 fn make_node(
-    node_id: &String,
+    node_id: NodeId,
     context: &mut Ctx,
     parameters: &Parameters,
     protocol: &ProtocolParameters,
@@ -305,7 +292,7 @@ fn make_node(
         protocol_parameters: protocol.clone(),
     };
 
-    let node = Node::new(node_id.to_string(), node_params);
+    let node = Node::new(node_id, node_params);
 
     NodeInterface {
         node,

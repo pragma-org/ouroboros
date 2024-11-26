@@ -1,48 +1,11 @@
 use crate::parameters::*;
 use rand::seq::SliceRandom;
 use rand::Rng;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::Hash;
 
-#[derive(Debug, Eq, Clone, Hash, PartialEq)]
-#[allow(non_snake_case)]
-pub struct NodeId {
-    pub nodeId: String,
-}
-
-impl std::fmt::Display for NodeId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "{}", self.nodeId)
-    }
-}
-
-impl<'a> Deserialize<'a> for NodeId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'a>,
-    {
-        Ok(NodeId {
-            nodeId: String::deserialize(deserializer)?,
-        })
-    }
-}
-
-impl Serialize for NodeId {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&self.nodeId)
-    }
-}
-
-#[allow(non_snake_case)]
-pub fn MkNodeId(node_id: &str) -> NodeId {
-    NodeId {
-        nodeId: String::from(node_id),
-    }
-}
+pub type NodeId = u64;
 
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,20 +42,16 @@ pub fn connect_node(delay: i64, upstream: &NodeId, downstream: &NodeId, topology
 
     topology
         .connections
-        .entry(upstream.clone())
+        .entry(*upstream)
         .and_modify(|v| {
-            v.insert(downstream.clone(), base_link.clone());
+            v.insert(*downstream, base_link.clone());
         })
-        .or_insert(map_singleton(downstream.clone(), base_link.clone()));
+        .or_insert(map_singleton(*downstream, base_link.clone()));
 }
 
 pub fn random_topology(rng: &mut impl Rng, parameters: &Parameters) -> Topology {
     let mut topology = Topology::empty();
-    let node_ids: Vec<NodeId> = (1..=parameters.peerCount)
-        .map(|i| NodeId {
-            nodeId: format!("N{}", i),
-        })
-        .collect();
+    let node_ids: Vec<NodeId> = (1..=parameters.peerCount).map(|i| i as u64).collect();
     fn random_connect(
         delay: i64,
         r: &mut impl Rng,

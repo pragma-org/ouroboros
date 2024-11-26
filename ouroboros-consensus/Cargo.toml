@@ -16,6 +16,8 @@ rand = "0.8.5"
 netsim = { git = "https://github.com/input-output-hk/ce-netsim", branch = "main" }
 # depends on ouroboros-simulation
 ouroboros-simulation = { path = "../ouroboros-simulation" }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["std", "json"] }
 
 [build-dependencies]
 cbindgen = "0.26.0"

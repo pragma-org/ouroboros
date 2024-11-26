@@ -51,11 +51,10 @@ pub unsafe extern "C" fn broadcast(network: &mut NetworkHandle, buf: *const u8, 
 #[no_mangle]
 pub unsafe extern "C" fn get_preferred_chain(
     network: &mut NetworkHandle,
-    node_id: *const c_char,
+    node_id: u64,
     buf: *mut u8,
     len: usize,
 ) -> usize {
-    let node_id = CStr::from_ptr(node_id).to_str().unwrap().into();
     let chain = network.get_preferred_chain(node_id);
     let chain_bytes = serde_json::to_vec(&chain).unwrap();
     let size = chain_bytes.len();

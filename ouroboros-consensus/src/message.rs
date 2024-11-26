@@ -4,7 +4,7 @@ use crate::block::{Block, BlockBody, Slot};
 use crate::chain::{Chain, Vote};
 use crate::crypto::Hash;
 
-pub type NodeId = String;
+pub type NodeId = u64;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Hash)]
 #[serde(tag = "tag", content = "contents")]

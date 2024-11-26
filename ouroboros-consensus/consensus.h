@@ -41,7 +41,7 @@ void broadcast(struct NetworkHandle *network,
  * If the buffer is too small, the function returns the required buffer size.
  */
 uintptr_t get_preferred_chain(struct NetworkHandle *network,
-                              const char *node_id,
+                              uint64_t node_id,
                               uint8_t *buf,
                               uintptr_t len);
 
@@ -66,7 +66,7 @@ struct NetworkHandle *start_network(const char *topology,
  * Creates and starts a new Consensus node
  *
  */
-struct ConsensusNode *start_node(const char *node_id,
+struct ConsensusNode *start_node(uint64_t node_id,
                                  uint64_t node_stake,
                                  uint64_t total_stake);
 

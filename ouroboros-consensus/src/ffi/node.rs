@@ -1,8 +1,4 @@
-use std::{
-    cmp,
-    ffi::{c_char, CStr},
-    slice,
-};
+use std::{cmp, slice};
 
 use crate::ouroboros_node::{Node, NodeHandle, NodeParameters};
 
@@ -15,11 +11,10 @@ pub struct ConsensusNode {
 ///
 #[no_mangle]
 pub unsafe extern "C" fn start_node(
-    node_id: *const c_char,
+    node_id: u64,
     node_stake: u64,
     total_stake: u64,
 ) -> Box<ConsensusNode> {
-    let node_id = CStr::from_ptr(node_id).to_str().unwrap().into();
     let node: Node = Node::new(
         node_id,
         NodeParameters {

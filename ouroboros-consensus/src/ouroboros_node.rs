@@ -1,10 +1,5 @@
-use std::{
-    sync::mpsc::{self, Receiver, Sender},
-    thread::{self, JoinHandle},
-};
-
 use crate::{
-    block::Block,
+    block::{Block, PartyId},
     chain::{empty_chain, Chain},
     crypto,
     event::UniqueId,
@@ -13,6 +8,11 @@ use crate::{
 use chrono::{DateTime, Utc};
 use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
+use std::{
+    sync::mpsc::{self, Receiver, Sender},
+    thread::{self, JoinHandle},
+};
+use tracing::{info, instrument};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "tag", rename_all_fields = "camelCase")]
@@ -39,19 +39,19 @@ pub struct NodeState {}
 pub enum OutEnvelope {
     Idle {
         timestamp: DateTime<Utc>,
-        source: String,
+        source: PartyId,
         best_chain: Chain,
     },
     #[serde(rename = "OutEnvelope")]
     SendMessage {
-        source: String,
-        destination: String,
+        source: PartyId,
+        destination: PartyId,
         out_id: UniqueId,
         out_message: Message,
         out_time: DateTime<Utc>,
         out_bytes: u32,
     },
-    Stopped(String),
+    Stopped(u64),
 }
 
 #[derive(Debug, Clone)]
@@ -118,7 +118,7 @@ impl Node {
         let thread = thread::spawn(move || node1.work(total_stake, rx_in, tx_out));
 
         NodeHandle {
-            node_id: self.node_id.clone(),
+            node_id: self.node_id,
             sender: tx_in,
             receiver: rx_out,
             thread: Some(thread),
@@ -149,10 +149,12 @@ impl Node {
                     in_message: Message::NextSlot(slot),
                     in_time: _,
                     in_bytes: _,
-                }) => match self.handle_slot(slot, total_stake) {
-                    Some(out) => tx_out.send(out).expect("Failed to send message"),
-                    None => (),
-                },
+                }) => {
+                    info!(node = self.node_id, slot = slot);
+                    if let Some(out) = self.handle_slot(slot, total_stake) {
+                        tx_out.send(out).expect("Failed to send message")
+                    }
+                }
                 Ok(InEnvelope::SendMessage {
                     origin: _,
                     in_id: _,
@@ -170,36 +172,17 @@ impl Node {
             tx_out
                 .send(OutEnvelope::Idle {
                     timestamp: Utc::now(),
-                    source: self.node_id.clone(),
+                    source: self.node_id,
                     best_chain: self.best_chain(),
                 })
                 .expect("Failed to send Idle message")
         }
     }
 
+    #[instrument(skip(self), fields(node_id = self.node_id))]
     fn handle_slot(&mut self, slot: u64, total_stake: u64) -> Option<OutEnvelope> {
         if self.is_slot_leader(total_stake) {
-            let mut signature = [0u8; 8];
-            self.seed.fill_bytes(&mut signature);
-            let mut leadership_proof = [0u8; 8];
-            self.seed.fill_bytes(&mut leadership_proof);
-            let mut body_hash = [0u8; 8];
-            self.seed.fill_bytes(&mut body_hash);
-            let parent_hash = match self.best_chain.first() {
-                Some(b) => b.body_hash.clone(),
-                None => Block::genesis_hash(),
-            };
-            let new_block = Block {
-                slot_number: slot,
-                creator_id: 1,
-                parent_block: parent_hash,
-                certificate: None,
-                leadership_proof: crypto::LeadershipProof {
-                    proof: leadership_proof,
-                },
-                signature: crypto::Signature { signature },
-                body_hash: crypto::Hash { hash: body_hash },
-            };
+            let new_block = self.forge_block(slot);
             self.best_chain.insert(0, new_block);
             let msg = Message::NewChain(self.best_chain.clone());
             Some(OutEnvelope::SendMessage {
@@ -232,6 +215,31 @@ impl Node {
             })
         } else {
             None
+        }
+    }
+
+    #[instrument(skip(self), fields(node_id = self.node_id))]
+    fn forge_block(&mut self, slot: u64) -> Block {
+        let mut signature = [0u8; 8];
+        self.seed.fill_bytes(&mut signature);
+        let mut leadership_proof = [0u8; 8];
+        self.seed.fill_bytes(&mut leadership_proof);
+        let mut body_hash = [0u8; 8];
+        self.seed.fill_bytes(&mut body_hash);
+        let parent_hash = match self.best_chain.first() {
+            Some(b) => b.body_hash.clone(),
+            None => Block::genesis_hash(),
+        };
+        Block {
+            slot_number: slot,
+            creator_id: self.node_id,
+            parent_block: parent_hash,
+            certificate: None,
+            leadership_proof: crypto::LeadershipProof {
+                proof: leadership_proof,
+            },
+            signature: crypto::Signature { signature },
+            body_hash: crypto::Hash { hash: body_hash },
         }
     }
 
@@ -274,56 +282,10 @@ mod tests {
     use crate::chain::empty_chain;
     extern crate quickcheck;
     use super::*;
-    use std::{fs::File, io::BufReader, path::Path};
-
-    #[derive(Debug, Deserialize, Serialize)]
-    struct Golden<T> {
-        samples: Vec<T>,
-    }
-
-    /*
-    #[test]
-    fn can_deserialize_chain_from_json() {
-        let curfile = file!();
-        // FIXME: having hardcoded relative path is not great for maintainability
-        // and portability
-        let golden_path = Path::new(curfile)
-            .parent()
-            .unwrap()
-            .join("../../peras-hs/golden/Chain.json");
-        let golden_file = File::open(golden_path).expect("Unable to open file");
-        let reader = BufReader::new(golden_file);
-        let result: Result<Golden<Chain>, _> = serde_json::from_reader(reader);
-
-        if let Err(err) = result {
-            println!("{}", err);
-            assert!(false);
-        }
-    }
-    */
-
-    /// FIXME: InEnvelope is incomplete, deserialisation from golden file will fail
-    fn can_deserialize_messages_from_json() {
-        let curfile = file!();
-        // FIXME: having hardcoded relative path is not great for maintainability
-        // and portability
-        let golden_path = Path::new(curfile)
-            .parent()
-            .unwrap()
-            .join("../../peras-iosim/golden/InEnvelope.json");
-        let golden_file = File::open(golden_path).expect("Unable to open file");
-        let reader = BufReader::new(golden_file);
-        let result: Result<Golden<InEnvelope>, _> = serde_json::from_reader(reader);
-
-        if let Err(err) = result {
-            println!("{}", err);
-            assert!(false);
-        }
-    }
 
     #[test]
     fn returns_idle_after_processing_tick() {
-        let node = Node::new("N1".into(), Default::default());
+        let node = Node::new(1, Default::default());
         let mut handle = node.start(100);
 
         handle.send(InEnvelope::SendMessage {
@@ -360,7 +322,7 @@ mod tests {
                 active_coefficient: 1.0,
             },
         };
-        let mut node = Node::new("N1".into(), params);
+        let mut node = Node::new(1, params);
 
         assert!(node.is_slot_leader(slot))
     }
@@ -373,9 +335,9 @@ mod tests {
                 active_coefficient: 0.5,
             },
         };
-        let mut node = Node::new("N1".into(), params);
+        let mut node = Node::new(1, params);
         let schedule = (0..10000)
-            .map(|n| node.is_slot_leader(100))
+            .map(|_| node.is_slot_leader(100))
             .filter(|b| *b)
             .count();
 
@@ -390,7 +352,7 @@ mod tests {
                 active_coefficient: 1.0,
             },
         };
-        let mut node = Node::new("N1".into(), params);
+        let mut node = Node::new(1, params);
 
         let schedule = (0..100)
             .map(|n| node.is_slot_leader(n))
@@ -407,10 +369,9 @@ mod tests {
             node_stake: 50,
             protocol_parameters: ProtocolParameters {
                 active_coefficient: 0.5,
-                ..Default::default()
             },
         };
-        let mut node = Node::new("N1".into(), params);
+        let mut node = Node::new(1, params);
 
         let schedule = (0..10000)
             .map(|_| node.is_slot_leader(100))
@@ -428,7 +389,7 @@ mod tests {
                 active_coefficient: 1.0,
             },
         };
-        let node = Node::new("N1".into(), params);
+        let node = Node::new(1, params);
         let mut handle = node.start(100);
 
         for i in 1..5 {
@@ -455,7 +416,6 @@ mod tests {
                 out_message: Message::NewChain(chain),
                 ..
             } => {
-                println!("got chain {:?}", serde_json::to_string(&chain));
                 assert_ne!(chain, empty_chain());
             }
             _ => assert!(false),
@@ -470,7 +430,7 @@ mod tests {
                 active_coefficient: 1.0,
             },
         };
-        let node = Node::new("N1".into(), params);
+        let node = Node::new(1, params);
         let mut handle = node.start(100);
 
         for i in 1..5 {
