@@ -4,7 +4,7 @@ use ouroboros::ledger::{MockLedgerState, PoolId, PoolSigma};
 use ouroboros::validator::Validator;
 use ouroboros_praos::consensus::BlockValidator;
 use pallas_crypto::hash::Hash;
-use pallas_math::math::{FixedDecimal, FixedPrecision};
+use pallas_math::math::FixedDecimal;
 use pallas_traverse::MultiEraHeader;
 
 fn validate_conway_block() {
@@ -56,15 +56,18 @@ fn validate_conway_block() {
             .expect_latest_opcert_sequence_number()
             .returning(|_| None);
 
-        let block_validator = BlockValidator::new(babbage_header, &ledger_state, &epoch_nonce, &active_slots_coeff);
+        let block_validator = BlockValidator::new(
+            babbage_header,
+            &ledger_state,
+            &epoch_nonce,
+            &active_slots_coeff,
+        );
         assert_eq!(block_validator.validate().is_ok(), expected);
     }
 }
 
 fn benchmark_validate_conway_block(c: &mut Criterion) {
-    c.bench_function("validate_conway_block", |b| {
-        b.iter(|| validate_conway_block())
-    });
+    c.bench_function("validate_conway_block", |b| b.iter(validate_conway_block));
 }
 
 criterion_group!(benches, benchmark_validate_conway_block);

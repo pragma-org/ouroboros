@@ -167,7 +167,11 @@ impl<'b> BlockValidator<'b> {
             })
     }
 
-    fn validate_operational_certificate(&self, issuer_vkey: &[u8], pool_id: &PoolId) -> Result<(), ValidationError> {
+    fn validate_operational_certificate(
+        &self,
+        issuer_vkey: &[u8],
+        pool_id: &PoolId,
+    ) -> Result<(), ValidationError> {
         // Verify the Operational Certificate signature
         let opcert_signature = Signature::try_from(
             self.header
@@ -445,8 +449,12 @@ mod tests {
                 .expect_latest_opcert_sequence_number()
                 .returning(|_| None);
 
-            let block_validator =
-                BlockValidator::new(babbage_header, &ledger_state, &epoch_nonce, &active_slots_coeff);
+            let block_validator = BlockValidator::new(
+                babbage_header,
+                &ledger_state,
+                &epoch_nonce,
+                &active_slots_coeff,
+            );
             assert_eq!(block_validator.validate().is_ok(), expected);
         }
     }
